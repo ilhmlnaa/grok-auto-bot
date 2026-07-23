@@ -339,28 +339,13 @@ def add_to_router(accounts):
                     clicked = None
                 if clicked:
                     ok(f"continue")
-                    # Dismiss cookie popup dulu (tapi JANGAN sentuh "Allow All" — itu mungkin OAuth consent)
-                    time.sleep(3)
-                    cookie_names = ['Reject All', 'Confirm My Choices', 'Accept All', 'Accept', 'OK', 'Got it', 'I Accept', 'Cancel']
-                    for _ in range(5):
-                        dismissed = False
-                        for cookie_btn in cookie_names:
-                            try:
-                                page.get_by_role('button', name=cookie_btn, exact=True).click(timeout=1500)
-                                wait(f"cookie: {cookie_btn}")
-                                dismissed = True
-                                time.sleep(1.5)
-                                break
-                            except:
-                                continue
-                        if not dismissed:
-                            break
+                    # Tunggu halaman settle
+                    time.sleep(4)
                     
-                    # Sekarang harusnya OAuth consent page — cari tombol consent
-                    time.sleep(2)
+                    # Klik "Allow All" — ini handle cookie popup + OAuth consent sekaligus!
                     consent_done = False
-                    # Di x.ai, "Allow All" juga bisa jadi tombol OAuth consent
-                    for btn_name in ['Allow', 'Allow All', 'Authorize', 'Accept', 'Allow Access', 'Approve', 'Yes']:
+                    # Coba exact match dulu
+                    for btn_name in ['Allow All', 'Allow', 'Authorize', 'Accept', 'Allow Access', 'Approve']:
                         try:
                             page.get_by_role('button', name=btn_name, exact=True).click(timeout=4000)
                             ok(f"consent: {btn_name}")
@@ -370,8 +355,19 @@ def add_to_router(accounts):
                         except:
                             continue
                     
+                    # Fallback: partial match (kalau ada spasi tersembunyi)
                     if not consent_done:
-                        # Debug: dump semua button yang tersisa
+                        for btn_name in ['Allow All', 'Allow', 'Authorize', 'Accept']:
+                            try:
+                                page.get_by_role('button', name=btn_name).click(timeout=3000)
+                                ok(f"consent (fuzzy): {btn_name}")
+                                consent_done = True
+                                time.sleep(2)
+                                break
+                            except:
+                                continue
+                    
+                    if not consent_done:
                         buttons = page.evaluate("""() => {
                             return [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => t);
                         }""")
