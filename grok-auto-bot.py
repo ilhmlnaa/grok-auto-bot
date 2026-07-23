@@ -390,19 +390,22 @@ def add_to_router(accounts):
                 
                 # Poll sampai sukses (page tetap buka!)
                 poll_ok = False
-                for _ in range(60):
+                for attempt in range(30):  # max 30 × 2s = 60s
                     try:
                         res = r9.poll(d['device_code'], d['codeVerifier'])
                     except Exception as e:
-                        wait(f"poll retry: {e}")
+                        wait(f"poll [{attempt+1}] retry: {e}")
                         time.sleep(2)
                         continue
                     if res.get('success'):
                         ok(f"added to 9router ✓")
                         added += 1; poll_ok = True; break
                     elif not res.get('pending'):
-                        wait(f"poll: {res.get('error', 'unknown')}")
+                        no(f"poll [{attempt+1}]: {res.get('error', res)}")
                         break
+                    else:
+                        if attempt % 5 == 4:
+                            wait(f"poll [{attempt+1}] still pending...")
                     time.sleep(2)
                 if not poll_ok:
                     # Kalau consent udah diklik, besar kemungkinan sukses
