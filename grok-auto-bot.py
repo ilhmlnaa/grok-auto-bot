@@ -339,39 +339,42 @@ def add_to_router(accounts):
                     clicked = None
                 if clicked:
                     ok(f"continue")
-                    # Tunggu halaman settle
-                    time.sleep(4)
-                    
-                    # Klik "Allow All" — ini handle cookie popup + OAuth consent sekaligus!
-                    consent_done = False
-                    # Coba exact match dulu
-                    for btn_name in ['Allow All', 'Allow', 'Authorize', 'Accept', 'Allow Access', 'Approve']:
-                        try:
-                            page.get_by_role('button', name=btn_name, exact=True).click(timeout=4000)
-                            ok(f"consent: {btn_name}")
-                            consent_done = True
-                            time.sleep(2)
-                            break
-                        except:
-                            continue
-                    
-                    # Fallback: partial match (kalau ada spasi tersembunyi)
-                    if not consent_done:
-                        for btn_name in ['Allow All', 'Allow', 'Authorize', 'Accept']:
+                    # ponytail: polling loop — dismiss cookie popups lalu cari OAuth consent, max 20s
+                    deadline = time.time() + 20
+                    consent_clicked = False
+                    cookie_names = ['Reject All', 'Confirm My Choices', 'Accept All', 'OK', 'Got it']
+                    consent_names = ['Allow', 'Allow All', 'Authorize', 'Accept']
+
+                    while time.time() < deadline:
+                        # Layer 1: dismiss cookie popup (bisa muncul >1x)
+                        for cb in cookie_names:
                             try:
-                                page.get_by_role('button', name=btn_name).click(timeout=3000)
-                                ok(f"consent (fuzzy): {btn_name}")
-                                consent_done = True
-                                time.sleep(2)
+                                page.get_by_role('button', name=cb, exact=True).click(timeout=800)
+                                wait(f"dismissed cookie: {cb}")
+                                time.sleep(0.5)
                                 break
                             except:
                                 continue
-                    
-                    if not consent_done:
+
+                        # Layer 2: klik OAuth consent
+                        for cn in consent_names:
+                            try:
+                                page.get_by_role('button', name=cn, exact=True).click(timeout=800)
+                                ok(f"consent: {cn}")
+                                consent_clicked = True
+                                break
+                            except:
+                                continue
+
+                        if consent_clicked:
+                            break
+                        time.sleep(1)
+
+                    if not consent_clicked:
                         buttons = page.evaluate("""() => {
                             return [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => t);
                         }""")
-                        no(f"no consent. buttons: {buttons}")
+                        no(f"consent timeout 20s. buttons: {buttons}")
                         page.close(); failed += 1; continue
                 
                 # Poll sampai sukses (page tetap buka!)
