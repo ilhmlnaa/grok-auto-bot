@@ -339,42 +339,41 @@ def add_to_router(accounts):
                     clicked = None
                 if clicked:
                     ok(f"continue")
-                    # Polling loop: dismiss visible cookie popup, then click OAuth consent. Max 25s.
-                    # All detection uses offsetParent !== null to ignore hidden/dismissed DOM remnants.
+                    # Polling loop: dismiss visible cookie popup (JS), then Playwright-click OAuth consent.
+                    # Cookie popup = vanilla JS, native click works.
+                    # OAuth consent = React, needs Playwright's full mouse event simulation.
                     deadline = time.time() + 25
                     consent_clicked = False
 
                     while time.time() < deadline:
-                        action = page.evaluate("""() => {
+                        # Phase 1: detect & dismiss VISIBLE cookie popup via JS
+                        dismissed = page.evaluate("""() => {
                             const vis = b => b.offsetParent !== null;
                             const btns = [...document.querySelectorAll('button')].filter(vis);
                             const byText = t => btns.find(b => b.textContent.trim() === t);
-
-                            // Phase 1: dismiss VISIBLE cookie popup
-                            const cookieDismiss = byText('Reject All') || byText('Confirm My Choices');
-                            if (cookieDismiss) {
-                                cookieDismiss.click();
-                                return {type: 'cookie', name: cookieDismiss.textContent.trim()};
-                            }
-
-                            // Phase 2: click OAuth consent (only when no visible cookie overlay)
-                            for (const name of ['Allow', 'Authorize', 'Accept', 'Allow All']) {
-                                const b = byText(name);
-                                if (b) { b.click(); return {type: 'consent', name}; }
-                            }
-
+                            const cookieBtn = byText('Reject All') || byText('Confirm My Choices');
+                            if (cookieBtn) { cookieBtn.click(); return cookieBtn.textContent.trim(); }
                             return null;
                         }""")
-
-                        if action and action['type'] == 'cookie':
-                            wait(f"dismissed cookie: {action['name']}")
+                        if dismissed:
+                            wait(f"dismissed cookie: {dismissed}")
                             time.sleep(1.5)
                             continue
-                        if action and action['type'] == 'consent':
-                            ok(f"consent: {action['name']}")
-                            consent_clicked = True
-                            break
 
+                        # Phase 2: Playwright click on OAuth consent (proper mouse events for React)
+                        for cn in ['Allow', 'Authorize', 'Accept', 'Allow All']:
+                            try:
+                                btn = page.get_by_role('button', name=cn, exact=True)
+                                if btn.is_visible(timeout=500):
+                                    btn.click(timeout=2000)
+                                    ok(f"consent: {cn}")
+                                    consent_clicked = True
+                                    break
+                            except:
+                                continue
+
+                        if consent_clicked:
+                            break
                         time.sleep(1)
 
                     if not consent_clicked:
