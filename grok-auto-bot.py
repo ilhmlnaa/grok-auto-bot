@@ -339,62 +339,39 @@ def add_to_router(accounts):
                     clicked = None
                 if clicked:
                     ok(f"continue")
-                    # Polling loop: dismiss cookie popup(s) lalu klik OAuth consent, max 25s
+                    # Polling loop: dismiss visible cookie popup, then click OAuth consent. Max 25s.
+                    # All detection uses offsetParent !== null to ignore hidden/dismissed DOM remnants.
                     deadline = time.time() + 25
                     consent_clicked = False
 
                     while time.time() < deadline:
-                        # Detect & dismiss cookie popup via JS (bypass overlay/visibility issues)
-                        dismissed = page.evaluate("""() => {
-                            const btns = [...document.querySelectorAll('button')];
-                            const texts = btns.map(b => b.textContent.trim());
-                            // Cookie popup indicator: has "Reject All" or "Confirm My Choices"
-                            const isCookie = texts.some(t => t === 'Reject All' || t === 'Confirm My Choices');
-                            if (!isCookie) return null;
-                            // Click "Reject All" to dismiss fastest
-                            for (const b of btns) {
-                                const t = b.textContent.trim();
-                                if (t === 'Reject All' || t === 'Confirm My Choices') {
-                                    b.click();
-                                    return t;
-                                }
-                            }
-                            return null;
-                        }""")
-                        if dismissed:
-                            wait(f"dismissed cookie: {dismissed}")
-                            time.sleep(1.5)  # Wait for cookie popup to animate away
-                            continue  # Re-check, might be another cookie layer
+                        action = page.evaluate("""() => {
+                            const vis = b => b.offsetParent !== null;
+                            const btns = [...document.querySelectorAll('button')].filter(vis);
+                            const byText = t => btns.find(b => b.textContent.trim() === t);
 
-                        # No cookie popup — try OAuth consent buttons
-                        # Use JS to find the right button (avoids Playwright matching wrong element)
-                        consent_result = page.evaluate("""() => {
-                            const btns = [...document.querySelectorAll('button')];
-                            // Priority order: "Allow" (exact) > "Authorize" > "Accept"
-                            // Skip "Allow All" initially — it's ambiguous (could be cookie remnant)
-                            for (const name of ['Allow', 'Authorize', 'Accept']) {
-                                for (const b of btns) {
-                                    if (b.textContent.trim() === name && b.offsetParent !== null) {
-                                        b.click();
-                                        return name;
-                                    }
-                                }
+                            // Phase 1: dismiss VISIBLE cookie popup
+                            const cookieDismiss = byText('Reject All') || byText('Confirm My Choices');
+                            if (cookieDismiss) {
+                                cookieDismiss.click();
+                                return {type: 'cookie', name: cookieDismiss.textContent.trim()};
                             }
-                            // Fallback: "Allow All" only if no cookie buttons present
-                            const texts = btns.map(b => b.textContent.trim());
-                            const hasCookieBtn = texts.some(t => ['Reject All','Confirm My Choices'].includes(t));
-                            if (!hasCookieBtn) {
-                                for (const b of btns) {
-                                    if (b.textContent.trim() === 'Allow All' && b.offsetParent !== null) {
-                                        b.click();
-                                        return 'Allow All';
-                                    }
-                                }
+
+                            // Phase 2: click OAuth consent (only when no visible cookie overlay)
+                            for (const name of ['Allow', 'Authorize', 'Accept', 'Allow All']) {
+                                const b = byText(name);
+                                if (b) { b.click(); return {type: 'consent', name}; }
                             }
+
                             return null;
                         }""")
-                        if consent_result:
-                            ok(f"consent: {consent_result}")
+
+                        if action and action['type'] == 'cookie':
+                            wait(f"dismissed cookie: {action['name']}")
+                            time.sleep(1.5)
+                            continue
+                        if action and action['type'] == 'consent':
+                            ok(f"consent: {action['name']}")
                             consent_clicked = True
                             break
 
