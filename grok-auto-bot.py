@@ -649,29 +649,38 @@ def _flow(page, custom_name=None):
 
     # 8
     step(8, "Redirect → grok.com")
-    last_body = ""
-    for i in range(20):
-        time.sleep(1)
-        try: url = page.url
-        except: continue
-        if 'grok.com' in url:
-            ok(f"→ {url}")
+    got_sso = False
+    for attempt in range(3):  # Retry redirect/cookies up to 3x
+        if attempt > 0:
+            wait(f"retry redirect {attempt}/2 — reload page...")
+            try: page.reload(wait_until='domcontentloaded', timeout=15000)
+            except: pass
+            time.sleep(3)
+        for i in range(20):
+            time.sleep(1)
+            try: url = page.url
+            except: continue
+            if 'grok.com' in url:
+                ok(f"→ {url}")
+                got_sso = True
+                break
+            try:
+                txt = page.evaluate("document.body.innerText")
+                for err in ['too weak','already','invalid','try again','failed']:
+                    if err.lower() in txt.lower():
+                        no(f"err: …{txt[max(0,txt.lower().find(err)-30):txt.lower().find(err)+50]}…")
+            except: pass
+        if got_sso:
             break
-        try:
-            txt = page.evaluate("document.body.innerText")
-            for err in ['too weak','already','invalid','try again','failed']:
-                if err.lower() in txt.lower() and err not in last_body:
-                    no(f"err: …{txt[max(0,txt.lower().find(err)-30):txt.lower().find(err)+50]}…")
-            last_body = txt
-        except: pass
-    else:
+        # Check SSO cookies even without redirect
         sso = [c for c in page.context.cookies() if 'sso' in c.get('name','').lower()]
         if sso:
-            ok(f"SSO cookies: {[c['name'] for c in sso]}")
-        else:
-            # Signup already completed (turnstile solved + submitted) — save anyway, don't waste a retry
-            wait(f"no redirect + no SSO cookies (last: {page.url})")
-            wait("akun terbuat tapi SSO expired — perlu login manual untuk --router")
+            ok(f"SSO cookies found (no redirect): {[c['name'] for c in sso]}")
+            got_sso = True
+            break
+    if not got_sso:
+        wait(f"no redirect + no SSO after 3 attempts (last: {page.url})")
+        wait("akun terbuat tapi SSO unavailable — perlu login manual untuk --router")
 
     # 9
     step(9, "Save credentials")
