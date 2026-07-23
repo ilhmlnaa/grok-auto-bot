@@ -28,6 +28,7 @@ MAILLDEZ = _env_or('MAILLDEZ_URL', 'https://your-mail-api.example')
 DOMAINS  = _env_or('MAILLDEZ_DOMAINS', 'example.com').split(',')
 ROUTER9  = _env_or('ROUTER9_URL', 'https://your-9router.example')
 ROUTER9_PASS = _env_or('ROUTER9_PASS', 'change-me')
+DASHBOARD_SID = _env_or('DASHBOARD_SID', '')
 _domain_idx = 0
 def next_domain():
     global _domain_idx
@@ -121,7 +122,10 @@ class Mail:
         self.s.headers['x-session-id'] = sid
         self.domain = next_domain()
         self.prefix = prefix
-        r = self.s.post(f'{MAILLDEZ}/api/inboxes', json={'domain':self.domain, 'address':prefix}, timeout=15)
+        headers = {}
+        if DASHBOARD_SID:
+            headers['x-dashboard-sid'] = DASHBOARD_SID
+        r = self.s.post(f'{MAILLDEZ}/api/inboxes', json={'domain':self.domain, 'address':prefix}, headers=headers, timeout=15)
         self.addr = r.json()['address']; return self.addr
     def peek_code(self):
         for m in self.s.get(f'{MAILLDEZ}/api/inboxes/{self.addr}/messages', timeout=15).json() or []:
