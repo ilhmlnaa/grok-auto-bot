@@ -339,42 +339,76 @@ def add_to_router(accounts):
                     clicked = None
                 if clicked:
                     ok(f"continue")
-                    # ponytail: polling loop — dismiss cookie popups lalu cari OAuth consent, max 20s
-                    deadline = time.time() + 20
+                    # Polling loop: dismiss cookie popup(s) lalu klik OAuth consent, max 25s
+                    deadline = time.time() + 25
                     consent_clicked = False
-                    cookie_names = ['Reject All', 'Confirm My Choices', 'Accept All', 'OK', 'Got it']
-                    consent_names = ['Allow', 'Allow All', 'Authorize', 'Accept']
 
                     while time.time() < deadline:
-                        # Layer 1: dismiss cookie popup (bisa muncul >1x)
-                        for cb in cookie_names:
-                            try:
-                                page.get_by_role('button', name=cb, exact=True).click(timeout=800)
-                                wait(f"dismissed cookie: {cb}")
-                                time.sleep(0.5)
-                                break
-                            except:
-                                continue
+                        # Detect & dismiss cookie popup via JS (bypass overlay/visibility issues)
+                        dismissed = page.evaluate("""() => {
+                            const btns = [...document.querySelectorAll('button')];
+                            const texts = btns.map(b => b.textContent.trim());
+                            // Cookie popup indicator: has "Reject All" or "Confirm My Choices"
+                            const isCookie = texts.some(t => t === 'Reject All' || t === 'Confirm My Choices');
+                            if (!isCookie) return null;
+                            // Click "Reject All" to dismiss fastest
+                            for (const b of btns) {
+                                const t = b.textContent.trim();
+                                if (t === 'Reject All' || t === 'Confirm My Choices') {
+                                    b.click();
+                                    return t;
+                                }
+                            }
+                            return null;
+                        }""")
+                        if dismissed:
+                            wait(f"dismissed cookie: {dismissed}")
+                            time.sleep(1.5)  # Wait for cookie popup to animate away
+                            continue  # Re-check, might be another cookie layer
 
-                        # Layer 2: klik OAuth consent
-                        for cn in consent_names:
-                            try:
-                                page.get_by_role('button', name=cn, exact=True).click(timeout=800)
-                                ok(f"consent: {cn}")
-                                consent_clicked = True
-                                break
-                            except:
-                                continue
-
-                        if consent_clicked:
+                        # No cookie popup — try OAuth consent buttons
+                        # Use JS to find the right button (avoids Playwright matching wrong element)
+                        consent_result = page.evaluate("""() => {
+                            const btns = [...document.querySelectorAll('button')];
+                            // Priority order: "Allow" (exact) > "Authorize" > "Accept"
+                            // Skip "Allow All" initially — it's ambiguous (could be cookie remnant)
+                            for (const name of ['Allow', 'Authorize', 'Accept']) {
+                                for (const b of btns) {
+                                    if (b.textContent.trim() === name && b.offsetParent !== null) {
+                                        b.click();
+                                        return name;
+                                    }
+                                }
+                            }
+                            // Fallback: "Allow All" only if no cookie buttons present
+                            const texts = btns.map(b => b.textContent.trim());
+                            const hasCookieBtn = texts.some(t => ['Reject All','Confirm My Choices'].includes(t));
+                            if (!hasCookieBtn) {
+                                for (const b of btns) {
+                                    if (b.textContent.trim() === 'Allow All' && b.offsetParent !== null) {
+                                        b.click();
+                                        return 'Allow All';
+                                    }
+                                }
+                            }
+                            return null;
+                        }""")
+                        if consent_result:
+                            ok(f"consent: {consent_result}")
+                            consent_clicked = True
                             break
+
                         time.sleep(1)
 
                     if not consent_clicked:
                         buttons = page.evaluate("""() => {
-                            return [...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => t);
+                            return [...document.querySelectorAll('button')].map(b => {
+                                const t = b.textContent.trim();
+                                const v = b.offsetParent !== null;
+                                return t ? (t + (v ? '' : '[hidden]')) : null;
+                            }).filter(t => t);
                         }""")
-                        no(f"consent timeout 20s. buttons: {buttons}")
+                        no(f"consent timeout 25s. buttons: {buttons}")
                         page.close(); failed += 1; continue
                 
                 # Poll sampai sukses (page tetap buka!)
