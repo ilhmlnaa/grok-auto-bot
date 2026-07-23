@@ -340,16 +340,18 @@ def add_to_router(accounts):
                 if clicked:
                     ok(f"continue")
                     # Polling loop: dismiss visible cookie popup (JS), then Playwright-click OAuth consent.
-                    # Cookie popup = vanilla JS, native click works.
-                    # OAuth consent = React, needs Playwright's full mouse event simulation.
                     deadline = time.time() + 25
                     consent_clicked = False
 
                     while time.time() < deadline:
-                        # Phase 1: detect & dismiss VISIBLE cookie popup via JS
+                        # Phase 1: dismiss VISIBLE cookie popup via JS
                         dismissed = page.evaluate("""() => {
-                            const vis = b => b.offsetParent !== null;
-                            const btns = [...document.querySelectorAll('button')].filter(vis);
+                            const isVis = b => {
+                                if (!b.offsetParent && b.tagName !== 'BODY') return false;
+                                const s = getComputedStyle(b);
+                                return s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0';
+                            };
+                            const btns = [...document.querySelectorAll('button')].filter(isVis);
                             const byText = t => btns.find(b => b.textContent.trim() === t);
                             const cookieBtn = byText('Reject All') || byText('Confirm My Choices');
                             if (cookieBtn) { cookieBtn.click(); return cookieBtn.textContent.trim(); }
@@ -360,7 +362,7 @@ def add_to_router(accounts):
                             time.sleep(1.5)
                             continue
 
-                        # Phase 2: Playwright click on OAuth consent (proper mouse events for React)
+                        # Phase 2: Playwright click on OAuth consent
                         for cn in ['Allow', 'Authorize', 'Accept', 'Allow All']:
                             try:
                                 btn = page.get_by_role('button', name=cn, exact=True)
@@ -377,14 +379,46 @@ def add_to_router(accounts):
                         time.sleep(1)
 
                     if not consent_clicked:
-                        buttons = page.evaluate("""() => {
-                            return [...document.querySelectorAll('button')].map(b => {
+                        # Detailed debug dump
+                        diag = page.evaluate("""() => {
+                            const btns = [...document.querySelectorAll('button')].map(b => {
                                 const t = b.textContent.trim();
-                                const v = b.offsetParent !== null;
-                                return t ? (t + (v ? '' : '[hidden]')) : null;
-                            }).filter(t => t);
+                                if (!t) return null;
+                                const s = getComputedStyle(b);
+                                const r = b.getBoundingClientRect();
+                                return {
+                                    text: t,
+                                    offsetParent: !!b.offsetParent,
+                                    display: s.display,
+                                    visibility: s.visibility,
+                                    opacity: s.opacity,
+                                    rect: `${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}`
+                                };
+                            }).filter(x => x);
+                            return {
+                                url: location.href,
+                                title: document.title,
+                                iframeCount: document.querySelectorAll('iframe').length,
+                                buttons: btns
+                            };
                         }""")
-                        no(f"consent timeout 25s. buttons: {buttons}")
+                        no(f"consent timeout 25s")
+                        for b in diag.get('buttons', []):
+                            tag = ''
+                            if not b['offsetParent']: tag += '[no-offset]'
+                            if b['display'] == 'none': tag += '[display:none]'
+                            if b['visibility'] == 'hidden': tag += '[vis:hidden]'
+                            if b['opacity'] == '0': tag += '[opacity:0]'
+                            wait(f"  btn: {b['text']}{tag} @ {b['rect']}")
+                        wait(f"  url: {diag.get('url','?')}")
+                        wait(f"  title: {diag.get('title','?')}")
+                        wait(f"  iframes: {diag.get('iframeCount', 0)}")
+                        # Screenshot for manual inspection
+                        try:
+                            ss = f"/tmp/consent-fail-{int(time.time())}.png"
+                            page.screenshot(path=ss)
+                            wait(f"  screenshot: {ss}")
+                        except: pass
                         page.close(); failed += 1; continue
                 
                 # Poll sampai sukses (page tetap buka!)
