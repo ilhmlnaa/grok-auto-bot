@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """grok-signup.py — Auto-register akun Grok (x.ai). Playwright + channel='chrome' + xvfb."""
-import sys, time, re, json, os, tempfile
+import sys, time, re, json, os, random, tempfile
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from cloakbrowser import launch_persistent_context
@@ -21,7 +21,8 @@ def _env_or(key, default): return _env.get(key, default)
 
 PASSWORD = _env_or('PASSWORD', 'change-me')
 TS_DIR   = Path('turnstilePatch').resolve()
-OUT      = Path('sso.txt')
+OUT      = Path(os.environ.get('OUTPUT_FILE', 'grok_sso.txt'))
+NAMES    = Path(os.environ.get('NAMES_FILE', 'custom_names.txt'))
 SIGNUP   = 'https://accounts.x.ai/sign-up?redirect=grok-com'
 MAILLDEZ = _env_or('MAILLDEZ_URL', 'https://your-mail-api.example')
 DOMAINS  = _env_or('MAILLDEZ_DOMAINS', 'example.com').split(',')
@@ -33,6 +34,23 @@ def next_domain():
     d = DOMAINS[_domain_idx % len(DOMAINS)]
     _domain_idx += 1
     return d
+
+def load_names():
+    """Load custom email prefixes from NAMES file, return list. Jika file gak ada → kosong."""
+    if not NAMES.exists():
+        return []
+    with open(NAMES) as f:
+        return [l.strip() for l in f if l.strip()]
+
+def remove_name(name):
+    """Hapus name dari NAMES file setelah sukses dipakai."""
+    if not NAMES.exists():
+        return
+    names = load_names()
+    if name in names:
+        names.remove(name)
+        with open(NAMES, 'w') as f:
+            f.write('\n'.join(names) + ('\n' if names else ''))
 
 def unlock_turnstile():
     """Return path to turnstilePatch directory (plaintext script.js + manifest.json)."""
@@ -98,11 +116,12 @@ class Mail:
     def __init__(self):
         self.s = creq.Session()
         self.s.headers.update({'Accept':'application/json','Content-Type':'application/json'})
-    def create(self):
+    def create(self, prefix=None):
         sid = self.s.get(f'{MAILLDEZ}/api/session', timeout=15).json()['sessionId']
         self.s.headers['x-session-id'] = sid
         self.domain = next_domain()
-        r = self.s.post(f'{MAILLDEZ}/api/inboxes', json={'domain':self.domain}, timeout=15)
+        self.prefix = prefix
+        r = self.s.post(f'{MAILLDEZ}/api/inboxes', json={'domain':self.domain, 'address':prefix}, timeout=15)
         self.addr = r.json()['address']; return self.addr
     def peek_code(self):
         for m in self.s.get(f'{MAILLDEZ}/api/inboxes/{self.addr}/messages', timeout=15).json() or []:
@@ -179,24 +198,55 @@ def main():
         ],
         viewport={'width': 1280, 'height': 1024},
     ) as ctx:
+        # Load custom names kalau ada
+        custom_names = load_names()
+        use_custom = bool(custom_names)
+        if use_custom:
+            wait(f"custom names: {len(custom_names)} tersedia")
+        
         for i in range(count):
             t_acc = time.time()
-            try:
-                res = run_one(ctx)
-                results.append(res)
-                ok_n += 1
-                elapsed = f"{time.time()-t_acc:.1f}s"
-                table_sep()
-                row(i+1, res['email'], 9, 'done', f"{GRN}SUCCESS{RST}", elapsed)
-                table_sep()
-                log_lines.append((f"[{i+1:03d}] {res['email']} → grok.com ({elapsed})", GRN, 'DONE'))
-            except Exception as e:
-                fail_n += 1
-                elapsed = f"{time.time()-t_acc:.1f}s"
-                table_sep()
-                row(i+1, '—failed—', 0, 'error', f"{RED}FAILED{RST}", elapsed)
-                table_sep()
-                log_lines.append((f"[{i+1:03d}] {e} ({elapsed})", RED, 'FAIL'))
+            # Cooldown antar akun biar gak kena rate-limit
+            if i > 0:
+                cooldown = random.randint(8, 15)
+                wait(f"cooldown {cooldown}s...")
+                time.sleep(cooldown)
+            
+            # Ambil custom name jika ada
+            custom = None
+            if use_custom:
+                if custom_names:
+                    custom = custom_names.pop(0)
+                    wait(f"using custom: {custom}")
+                else:
+                    wait("custom names habis, fallback → random")
+            
+            # Retry up to 2 kali kalau gagal
+            for retry in range(3):
+                try:
+                    res = run_one(ctx, custom_name=custom)
+                    results.append(res)
+                    ok_n += 1
+                    # Hapus name dari file setelah sukses
+                    if custom:
+                        remove_name(custom)
+                    elapsed = f"{(time.time()-t_acc):.1f}s"
+                    table_sep()
+                    row(i+1, res['email'], 9, 'done', f"{GRN}SUCCESS{RST}", elapsed)
+                    table_sep()
+                    log_lines.append((f"[{i+1:03d}] {res['email']} → grok.com ({elapsed})", GRN, 'DONE'))
+                    break
+                except Exception as e:
+                    if retry < 2:
+                        wait(f"retry {retry+1}/2: {e}")
+                        time.sleep(5)
+                        continue
+                    fail_n += 1
+                    elapsed = f"{(time.time()-t_acc):.1f}s"
+                    table_sep()
+                    row(i+1, '—failed—', 0, 'error', f"{RED}FAILED{RST}", elapsed)
+                    table_sep()
+                    log_lines.append((f"[{i+1:03d}] {e} ({elapsed})", RED, 'FAIL'))
             # live stats
             print(f"  {DIM}[{ok_n}✓ {fail_n}×]  queue: {count-i-1}  elapsed: {time.time()-t_start:.0f}s{RST}")
     # Log box di akhir
@@ -365,7 +415,7 @@ def _chrome_major():
         return '148'
 CHROME_V = _chrome_major()
 
-def run_one(ctx):
+def run_one(ctx, custom_name=None):
     # Intercept turnstile.render() dari awal — tangkap cData, chlPageData, action, callback
     ctx.add_init_script("""
         const i = setInterval(() => {
@@ -392,11 +442,11 @@ def run_one(ctx):
         'accept-language': 'en-US,en;q=0.9',
     })
     try:
-        return _flow(page)
+        return _flow(page, custom_name)
     finally:
         page.close()
 
-def _flow(page):
+def _flow(page, custom_name=None):
     # 1
     step(1, "Open x.ai signup")
     page.goto(SIGNUP, wait_until='domcontentloaded', timeout=45000)
@@ -413,8 +463,11 @@ def _flow(page):
 
     # 3
     step(3, "Create temp email")
-    mail = Mail(); addr = mail.create()
-    wait(f"{addr}")
+    mail = Mail(); addr = mail.create(prefix=custom_name)
+    if custom_name:
+        wait(f"{addr} (custom)")
+    else:
+        wait(f"{addr}")
     page.locator('input[type=email]').fill(addr)
     page.locator('input[type=email]').press('Enter')
     try:
