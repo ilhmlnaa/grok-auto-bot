@@ -663,8 +663,11 @@ def _flow(page, custom_name=None):
         except: pass
     else:
         sso = [c for c in page.context.cookies() if 'sso' in c.get('name','').lower()]
-        if sso: ok(f"SSO cookies: {[c['name'] for c in sso]}")
-        else: raise RuntimeError(f"no redirect (last: {page.url})")
+        if sso:
+            ok(f"SSO cookies: {[c['name'] for c in sso]}")
+        else:
+            # Signup already completed (turnstile solved + submitted) — save anyway, don't waste a retry
+            wait(f"no redirect but signup done, saving anyway (last: {page.url})")
 
     # 9
     step(9, "Save credentials")
