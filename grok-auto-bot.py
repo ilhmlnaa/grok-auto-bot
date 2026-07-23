@@ -22,6 +22,7 @@ def _env_or(key, default): return _env.get(key, default)
 PASSWORD = _env_or('PASSWORD', 'change-me')
 TS_DIR   = Path('turnstilePatch').resolve()
 OUT      = Path(os.environ.get('OUTPUT_FILE', 'grok_sso.txt'))
+OUT_NOSSO = Path('grok_no_sso.txt')
 NAMES    = Path(os.environ.get('NAMES_FILE', 'custom_names.txt'))
 SIGNUP   = 'https://accounts.x.ai/sign-up?redirect=grok-com'
 MAILLDEZ = _env_or('MAILLDEZ_URL', 'https://your-mail-api.example')
@@ -685,15 +686,17 @@ def _flow(page, custom_name=None):
     # 9
     step(9, "Save credentials")
     sso = [c for c in page.context.cookies() if 'sso' in c.get('name','').lower()]
+    has_sso = bool(sso)
     data = {
         'email': addr, 'password': PASSWORD, 'code': code,
         'sso_cookies': page.context.cookies(), 'final_url': page.url,
-        'has_sso': bool(sso),
+        'has_sso': has_sso,
         'timestamp': int(time.time()),
     }
-    with open(OUT, 'a') as f:
+    out_file = OUT if has_sso else OUT_NOSSO
+    with open(out_file, 'a') as f:
         f.write(json.dumps(data) + '\n')
-    ok(f"saved → {OUT}")
+    ok(f"saved → {out_file}")
     return data
 
 if __name__ == '__main__':
