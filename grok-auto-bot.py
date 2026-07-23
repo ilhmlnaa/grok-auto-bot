@@ -431,6 +431,8 @@ def run_one(ctx, custom_name=None):
         }, 10);
     """)
     page = ctx.new_page()
+    # Clear cookies biar gak redirect ke account page (sisa SSO akun sebelumnya)
+    ctx.clear_cookies()
     page.set_extra_http_headers({
         'sec-ch-ua': f'"Chromium";v="{CHROME_V}", "Google Chrome";v="{CHROME_V}", "Not-A.Brand";v="99"',
         'sec-ch-ua-mobile': '?0',
