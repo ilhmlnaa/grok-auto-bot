@@ -1,0 +1,5 @@
+.env
+grok_sso.txt
+*.pyc
+__pycache__/
+turnstilePatch/
