@@ -344,6 +344,12 @@ def add_to_router(accounts):
                     consent_clicked = False
 
                     while time.time() < deadline:
+                        # Shortcut: if page already redirected to done, consent was auto-approved
+                        if 'device/done' in page.url:
+                            ok(f"consent: auto-approved (redirected to done)")
+                            consent_clicked = True
+                            break
+
                         # Phase 1: dismiss VISIBLE cookie popup via JS
                         dismissed = page.evaluate("""() => {
                             const isVis = b => {
