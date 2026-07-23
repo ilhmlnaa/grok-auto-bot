@@ -302,6 +302,9 @@ def add_to_router(accounts):
             if email in existing:
                 wait("sudah ada, skip")
                 skipped += 1; continue
+            if acc.get('has_sso') is False:
+                wait("no SSO cookies, skip (perlu login manual)")
+                skipped += 1; continue
             try:
                 # Inject SSO cookies ke browser context (Playwright-compatible)
                 pw_cookies = []
@@ -667,13 +670,16 @@ def _flow(page, custom_name=None):
             ok(f"SSO cookies: {[c['name'] for c in sso]}")
         else:
             # Signup already completed (turnstile solved + submitted) — save anyway, don't waste a retry
-            wait(f"no redirect but signup done, saving anyway (last: {page.url})")
+            wait(f"no redirect + no SSO cookies (last: {page.url})")
+            wait("akun terbuat tapi SSO expired — perlu login manual untuk --router")
 
     # 9
     step(9, "Save credentials")
+    sso = [c for c in page.context.cookies() if 'sso' in c.get('name','').lower()]
     data = {
         'email': addr, 'password': PASSWORD, 'code': code,
         'sso_cookies': page.context.cookies(), 'final_url': page.url,
+        'has_sso': bool(sso),
         'timestamp': int(time.time()),
     }
     with open(OUT, 'a') as f:
