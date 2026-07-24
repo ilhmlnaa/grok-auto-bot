@@ -1,5 +1,5 @@
 .env
 grok_sso.txt
-*.pyc
+grok_no_sso.txt
+custom_names.txt
 __pycache__/
-turnstilePatch/

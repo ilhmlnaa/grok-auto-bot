@@ -20,6 +20,7 @@ if _envfile.exists():
 def _env_or(key, default): return _env.get(key, default)
 
 PASSWORD = _env_or('PASSWORD', 'change-me')
+CAPTCHA_KEY = _env_or('CAPTCHA_KEY', '')
 TS_DIR   = Path('turnstilePatch').resolve()
 OUT      = Path(os.environ.get('OUTPUT_FILE', 'grok_sso.txt'))
 OUT_NOSSO = Path('grok_no_sso.txt')
@@ -592,7 +593,7 @@ def _flow(page, custom_name=None):
     # Kirim ke 2captcha — createTask API
     import urllib.request
     task_data = json.dumps({
-        'clientKey': '10cdfa00a8957ad19ae3ce7f496e5f8a',
+        'clientKey': CAPTCHA_KEY,
         'task': {
             'type': 'TurnstileTaskProxyless',
             'websiteURL': page.url,
@@ -620,7 +621,7 @@ def _flow(page, custom_name=None):
         time.sleep(5)
         poll_req = urllib.request.Request(
             'https://api.2captcha.com/getTaskResult',
-            data=json.dumps({'clientKey': '10cdfa00a8957ad19ae3ce7f496e5f8a', 'taskId': int(task_id)}).encode(),
+            data=json.dumps({'clientKey': CAPTCHA_KEY, 'taskId': int(task_id)}).encode(),
             headers={'Content-Type': 'application/json'}
         )
         poll = json.loads(urllib.request.urlopen(poll_req, timeout=15).read())
